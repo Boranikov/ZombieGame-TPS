@@ -89,3 +89,13 @@ Zorluk: Kaynakların çoğunlukla İngilizce olması.
     Çözüm: Dökümantasyon okumaları ve örnek kod parçalarının analizi ile sorun aşıldı.
 Zorluk: Unity animasyon 'rigging' (iskelet sistemi) karmaşıklığı.
     Çözüm: 'Blend' parametreleri sadeleştirilerek ve temel animasyonlara odaklanılarak çözüldü.
+
+8. Kazanımlar
+
+Unity oyun motorunda TPS temel mekaniklerinin uygulanması, kamera kontrolü, silah sistemi ve çarpışma tabanlı hasar yapılarını pratikte uygulama deneyimi kazanıldı.
+Yapay zeka NPC davranışlarının FSM (Finite State Machine) temelli modellenmesi öğrenildi ve gerçek oyun ortamında durumsal geçişlerin uygulanabilirliği kavrandı.
+Unity NavMesh sistemi ile pathfinding algoritmalarının oyun içinde nasıl çalıştığı, AI karakterlerin oyuncuya göre yönlenmesi ve en kısa rota hesaplamalarının kullanım pratikleri deneyimlendi.
+OOP mantığında sınıf ayrımı, component bazlı script organizasyonu ve modüler kod yapısının oyun geliştirirken süreci ne kadar hızlandırdığı deneyimlenmiş oldu.
+Oyun tasarımında karar verme aşamasının (motor seçimi, Unity vs Unreal) geliştirme süreçlerine doğrudan etki ettiği ve hızlı prototipleme açısından Unity’nin avantajı uygulamalı olarak görüldü.
+İngilizce teknik kaynakları okuyup çözüm bulma becerisinin proje geliştirmede kritik olduğu açık şekilde tecrübe edildi.
+
