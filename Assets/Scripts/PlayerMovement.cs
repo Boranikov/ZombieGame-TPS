@@ -1,81 +1,98 @@
-using System.Collections;
-using System.Collections.Generic;
-using UnityEngine;
+﻿using UnityEngine;
 
-[RequireComponent(typeof(CharacterController))]
 public class PlayerMovement : MonoBehaviour
 {
-    public Camera playerCamera;
-    public float walkSpeed = 6f;
-    public float runSpeed = 12f;
-    public float jumpPower = 7f;
-    public float gravity = 10f;
-    public float lookSpeed = 2f;
-    public float lookXLimit = 45f;
-    public float defaultHeight = 2f;
-    public float crouchHeight = 1f;
-    public float crouchSpeed = 3f;
+    [Header("Refs")]
+    [SerializeField] private Animator animator;
 
-    private Vector3 moveDirection = Vector3.zero;
-    private float rotationX = 0;
-    private CharacterController characterController;
+    [Header("Movement")]
+    [SerializeField] private float moveSpeed = 5.0f;
+    [SerializeField] private float gravity = 1.0f;
 
-    private bool canMove = true;
+    private CharacterController controller;
+    private float yVelocity = 0.0f;
+    private bool isDead = false;
+
+    void Awake()
+    {
+        controller = GetComponent<CharacterController>();
+        if (!animator)
+            animator = GetComponent<Animator>();
+    }
 
     void Start()
     {
-        characterController = GetComponent<CharacterController>();
-        Cursor.lockState = CursorLockMode.Locked;
-        Cursor.visible = false;
+        if (animator)
+        {
+            animator.SetBool("isDead", false);
+            animator.SetBool("isGrounded", true);
+            animator.SetFloat("Speed", 0f);
+        }
     }
 
     void Update()
     {
-        Vector3 forward = transform.TransformDirection(Vector3.forward);
-        Vector3 right = transform.TransformDirection(Vector3.right);
+        if (isDead)
+            return;
 
-        bool isRunning = Input.GetKey(KeyCode.LeftShift);
-        float curSpeedX = canMove ? (isRunning ? runSpeed : walkSpeed) * Input.GetAxis("Vertical") : 0;
-        float curSpeedY = canMove ? (isRunning ? runSpeed : walkSpeed) * Input.GetAxis("Horizontal") : 0;
-        float movementDirectionY = moveDirection.y;
-        moveDirection = (forward * curSpeedX) + (right * curSpeedY);
+        float h = Input.GetAxis("Horizontal");
+        float v = Input.GetAxis("Vertical");
 
-        if (Input.GetButton("Jump") && canMove && characterController.isGrounded)
+        Vector3 direction = new Vector3(h, 0f, v);
+        Vector3 velocity = direction * moveSpeed;
+
+        float moveDir = 0f;
+        if (Mathf.Abs(h) > 0.1f)
+            moveDir = h;
+        else if (v < -0.1f)
+            moveDir = 0.5f;
+
+        animator.SetFloat("Direction", moveDir);
+
+
+        if (controller.isGrounded)
         {
-            moveDirection.y = jumpPower;
+            yVelocity = -1f;
         }
         else
         {
-            moveDirection.y = movementDirectionY;
+            yVelocity -= gravity;
         }
 
-        if (!characterController.isGrounded)
+        velocity.y = yVelocity;
+        velocity = transform.TransformDirection(velocity);
+        controller.Move(velocity * Time.deltaTime);
+
+
+        float planarSpeed = new Vector3(controller.velocity.x, 0f, controller.velocity.z).magnitude;
+        animator.SetFloat("Speed", planarSpeed, 0.1f, Time.deltaTime);
+        animator?.SetBool("isGrounded", controller.isGrounded);
+    }
+
+    public void Die()
+    {
+        if (isDead) return;
+
+        isDead = true;
+
+
+        animator.SetBool("isDead", true);
+
+        controller.enabled = false;
+
+        CapsuleCollider capsule = GetComponent<CapsuleCollider>();
+        if (capsule != null)
         {
-            moveDirection.y -= gravity * Time.deltaTime;
+            capsule.direction = 2; 
+            capsule.center = new Vector3(0, 0.5f, 0); 
         }
 
-        if (Input.GetKey(KeyCode.R) && canMove)
-        {
-            characterController.height = crouchHeight;
-            walkSpeed = crouchSpeed;
-            runSpeed = crouchSpeed;
 
-        }
-        else
-        {
-            characterController.height = defaultHeight;
-            walkSpeed = 6f;
-            runSpeed = 12f;
-        }
+        Invoke("DisablePlayer", 3f);
+    }
 
-        characterController.Move(moveDirection * Time.deltaTime);
-
-        if (canMove)
-        {
-            rotationX += -Input.GetAxis("Mouse Y") * lookSpeed;
-            rotationX = Mathf.Clamp(rotationX, -lookXLimit, lookXLimit);
-            playerCamera.transform.localRotation = Quaternion.Euler(rotationX, 0, 0);
-            transform.rotation *= Quaternion.Euler(0, Input.GetAxis("Mouse X") * lookSpeed, 0);
-        }
+    void DisablePlayer()
+    {
+        gameObject.SetActive(false);
     }
 }
