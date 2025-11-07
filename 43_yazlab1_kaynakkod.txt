@@ -1,0 +1,1306 @@
+AimConstraintHelper.cs
+using UnityEngine;
+
+public class AimConstraintHelper : MonoBehaviour
+{
+    [Header("References")]
+    [SerializeField] private Transform aimTarget;
+    [SerializeField] private Transform mainCamera;
+    [SerializeField] private float aimDistance = 100f; 
+
+    [Header("Settings")]
+    [SerializeField] private float smoothSpeed = 10f;
+    [SerializeField] private bool onlyAimWhenShooting = false; 
+
+    [Header("Offset Settings")]
+    [SerializeField] private Vector3 shoulderOffset = new Vector3(0.5f, 0f, 0f); 
+
+    void Update()
+    {
+        if (aimTarget == null || mainCamera == null)
+            return;
+
+        if (onlyAimWhenShooting && !Input.GetMouseButton(0))
+            return;
+
+        Vector3 offset = mainCamera.right * shoulderOffset.x +
+                         mainCamera.up * shoulderOffset.y +
+                         mainCamera.forward * shoulderOffset.z;
+
+        Vector3 targetPosition = mainCamera.position + mainCamera.forward * aimDistance + offset;
+
+        aimTarget.position = Vector3.Lerp(
+            aimTarget.position,
+            targetPosition,
+            Time.deltaTime * smoothSpeed
+        );
+    }
+}
+AimRigController.cs
+using UnityEngine;
+using UnityEngine.Animations.Rigging;
+
+public class AimRigController : MonoBehaviour
+{
+    [Header("References")]
+    public Rig aimRig;            
+    public Animator animator;     
+
+    [Header("Settings")]
+    [Range(0f, 10f)] public float smoothSpeed = 5f;
+    public string fireStateName = "Fire"; 
+
+    private float targetWeight = 0f;
+
+    void Update()
+    {
+      
+        AnimatorStateInfo stateInfo = animator.GetCurrentAnimatorStateInfo(0);
+
+        bool isInFireState = stateInfo.IsName(fireStateName);
+
+        targetWeight = isInFireState ? 1f : 0f;
+
+        aimRig.weight = Mathf.Lerp(aimRig.weight, targetWeight, Time.deltaTime * smoothSpeed);
+    }
+}
+AnimatorDebugger.cs
+using UnityEngine;
+
+public class AnimatorDebugger : MonoBehaviour
+{
+    private Animator _anim;
+
+    void Start()
+    {
+        _anim = GetComponent<Animator>();
+        if (_anim == null)
+        {
+            Debug.LogError("[AnimatorDebugger] Animator yok!");
+            return;
+        }
+
+        Debug.Log("[AnimatorDebugger] Animator bulundu: " + _anim.name);
+        var controller = _anim.runtimeAnimatorController;
+        if (controller == null)
+        {
+            Debug.LogError("[AnimatorDebugger] Controller atanmad  (runtimeAnimatorController null).");
+            return;
+        }
+
+        Debug.Log("[AnimatorDebugger] Controller: " + controller.name + " | ClipCount: " + controller.animationClips.Length);
+
+        foreach (var c in controller.animationClips)
+        {
+            Debug.Log("[AnimatorDebugger] Clip: " + c.name + "  length: " + c.length);
+        }
+
+        var parameters = _anim.parameters;
+        Debug.Log("[AnimatorDebugger] Parametre say s : " + parameters.Length);
+        foreach (var p in parameters)
+        {
+            Debug.Log($"[AnimatorDebugger] Param: {p.name}  type: {p.type}");
+        }
+    }
+}
+
+using UnityEngine;
+
+[RequireComponent(typeof(CharacterController))]
+public class EnemyMovement : MonoBehaviour
+{
+    [Header("Hareket")]
+    [SerializeField] private float moveSpeed = 3.0f;
+    [SerializeField] private float gravity = 9.81f;
+
+    [Header("Algılama / Saldırı")]
+    [SerializeField] private float detectionRange = 14f;
+    [SerializeField] private float attackRange = 2.2f;
+    [SerializeField] private float attackCooldown = 2f;
+
+    [Header("Saldırı Gücü")]
+    [SerializeField] private int attackDamage = 15;
+
+    private CharacterController controller;
+    private Animator animator;
+    private Transform player;
+    private float yVel, nextAttackAllowed;
+    private Health selfHealth;
+
+    void Awake()
+    {
+        controller = GetComponent<CharacterController>();
+        animator = GetComponent<Animator>();
+        selfHealth = GetComponent<Health>();
+    }
+
+    void Start()
+    {
+        var p = GameObject.FindGameObjectWithTag("Player");
+        player = p ? p.transform : null;
+
+        if (animator)
+        {
+            animator.SetBool("isWalking", false);
+            animator.SetBool("isDead", false);
+            animator.ResetTrigger("Attack");
+        }
+    }
+
+    void Update()
+    {
+        if (selfHealth != null && selfHealth.IsDead) return;
+        if (player == null || controller == null) return;
+
+        Vector3 to = player.position - transform.position;
+        Vector3 toXZ = new Vector3(to.x, 0f, to.z);
+        float dist = toXZ.magnitude;
+
+        if (controller.isGrounded) yVel = -1f;
+        else yVel -= gravity * Time.deltaTime;
+
+        Vector3 move = Vector3.zero;
+
+        if (dist <= detectionRange && dist > attackRange)
+        {
+            Quaternion look = Quaternion.LookRotation(toXZ.normalized, Vector3.up);
+            transform.rotation = Quaternion.Slerp(transform.rotation, look, 10f * Time.deltaTime);
+            move = toXZ.normalized * moveSpeed;
+            animator?.SetBool("isWalking", true);
+        }
+        else
+        {
+            animator?.SetBool("isWalking", false);
+        }
+
+        if (dist <= attackRange && Time.time >= nextAttackAllowed)
+        {
+            animator?.SetTrigger("Attack");
+            nextAttackAllowed = Time.time + attackCooldown;
+
+            PlayerHealth playerHealth = player.GetComponent<PlayerHealth>();
+            if (playerHealth != null && !playerHealth.IsDead())
+            {
+                playerHealth.TakeDamage(attackDamage);
+            }
+        }
+
+        move.y = yVel;
+        controller.Move(move * Time.deltaTime);
+    }
+}
+
+using UnityEngine;
+
+public class EnemyPatrol : MonoBehaviour
+{
+    [SerializeField] private string waypointGroupName = "WaypointGroup";
+    [SerializeField] private float speed = 2f;
+    [SerializeField] private float waitTime = 1f;
+
+    private Transform[] waypoints;
+    private int currentIndex = 1;
+    private float waitTimer = 0f;
+    private Animator animator;
+
+    void Start()
+    {
+        animator = GetComponent<Animator>();
+
+        GameObject group = GameObject.Find(waypointGroupName);
+        if (group == null)
+        {
+            Debug.LogError("WaypointGroup sahnede bulunamad !");
+            enabled = false;
+            return;
+        }
+
+        waypoints = group.GetComponentsInChildren<Transform>();
+        waypoints = System.Array.FindAll(waypoints, t => t != group.transform);
+
+        if (waypoints.Length > 1)
+            transform.position = waypoints[0].position;
+    }
+
+    void Update()
+    {
+        if (waypoints == null || waypoints.Length == 0) return;
+
+        Transform target = waypoints[currentIndex];
+        float step = speed * Time.deltaTime;
+
+        float distance = Vector3.Distance(transform.position, target.position);
+        bool isMoving = distance > 0.05f;
+
+        if (animator != null)
+            animator.SetBool("isWalking", isMoving); 
+
+        transform.position = Vector3.MoveTowards(transform.position, target.position, step);
+
+        if (distance < 0.1f)
+        {
+            waitTimer += Time.deltaTime;
+            if (waitTimer >= waitTime)
+            {
+                currentIndex = (currentIndex + 1) % waypoints.Length;
+                waitTimer = 0f;
+            }
+        }
+    }
+}
+
+using UnityEngine;
+
+public class EnemySpawnManager : MonoBehaviour
+{
+    [Header("Prefabs")]
+    [SerializeField] private GameObject vardiyaliEnemyPrefab;    
+    [SerializeField] private GameObject vardiyasizEnemyPrefab;
+
+    [Header("Spawn Points")]
+    [SerializeField] private Transform vardiyaliSpawnPoint;      
+    [SerializeField] private Transform[] vardiyasizSpawnPoints; 
+
+    [Header("Settings")]
+    [SerializeField] private float spawnDelay = 1.5f;
+    [SerializeField] private int maxEnemies = 20;
+
+    private float nextSpawnTime = -1f;
+    private int spawnedCount = 0;
+
+    void Update()
+    {
+        if (spawnedCount < maxEnemies && Time.time >= nextSpawnTime)
+        {
+            bool spawnVardiyali = Random.value > 0.5f;
+
+            if (spawnVardiyali)
+            {
+                Instantiate(vardiyaliEnemyPrefab, vardiyaliSpawnPoint.position, vardiyaliSpawnPoint.rotation);
+            }
+            else if (vardiyasizSpawnPoints.Length > 0)
+            {
+                Transform randomPoint = vardiyasizSpawnPoints[Random.Range(0, vardiyasizSpawnPoints.Length)];
+                Instantiate(vardiyasizEnemyPrefab, randomPoint.position, randomPoint.rotation);
+            }
+
+            spawnedCount++;
+            nextSpawnTime = Time.time + spawnDelay;
+        }
+    }
+}
+
+using TMPro;
+using UnityEngine;
+using UnityEngine.UI;
+using UnityEngine.SceneManagement;
+
+public class GameManager : MonoBehaviour
+{
+    [Header("UI Panels")]
+    public GameObject mainMenuPanel;
+    public GameObject controlsPanel;
+    public GameObject gamePanel;
+    public GameObject endPanel;
+    public GameObject timerBox;
+
+    [Header("UI Texts")]
+    public TMP_Text timerText;
+    public TMP_Text missionText;
+    public TMP_Text resultText;
+
+    [Header("Player & Settings")]
+    public GameObject player;
+    public float missionTime = 120f; 
+
+    private float timer;
+    private bool missionActive = false;
+    private bool missionEnded = false;
+    private bool reachedA = false;
+
+    private PlayerHealth playerHealth;
+    private PlayerGui playerGui; 
+
+    void Start()
+    {
+        Time.timeScale = 0f;
+
+        playerHealth = player.GetComponent<PlayerHealth>();
+        playerGui = player.GetComponent<PlayerGui>(); 
+
+        mainMenuPanel.SetActive(true);
+        controlsPanel.SetActive(false);
+        gamePanel.SetActive(false);
+        endPanel.SetActive(false);
+        timerBox.SetActive(false);
+
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
+    }
+
+    void Update()
+    {
+        if (!missionActive || missionEnded) return;
+
+        timer -= Time.deltaTime;
+        timerText.text = $"{timer:F1} sn";
+
+        if (timer <= 0f)
+        {
+            MissionFailed("Görev başarısız! Süre doldu!");
+            return;
+        }
+
+        if (playerHealth != null && playerHealth.IsDead())
+        {
+            MissionFailed("Öldün!");
+        }
+    }
+
+    public void StartMission()
+    {
+        Time.timeScale = 1f;
+
+        mainMenuPanel.SetActive(false);
+        controlsPanel.SetActive(false);
+        gamePanel.SetActive(true);
+        endPanel.SetActive(false);
+        timerBox.SetActive(true);
+
+        missionActive = true;
+        missionEnded = false;
+        reachedA = false;
+        timer = missionTime;
+
+        missionText.text = "Görev: Canavarları öldür ve helikoptere ulaş!";
+
+        if (playerGui != null)
+            playerGui.EnableCrosshair(true);
+
+        Cursor.lockState = CursorLockMode.Locked;
+        Cursor.visible = false;
+    }
+
+    public void ReachTargetA()
+    {
+        if (!reachedA)
+        {
+            reachedA = true;
+            missionText.text = "Canavarları temizledin! Şimdi helikoptere ulaş!";
+        }
+    }
+
+
+    public void ReachTargetB()
+    {
+        if (!reachedA)
+        {
+            missionText.text = "Önce canavarları temizlemelisin!";
+            return;
+        }
+
+        MissionSuccess();
+    }
+
+
+    void MissionSuccess()
+    {
+        missionActive = false;
+        missionEnded = true;
+
+        gamePanel.SetActive(false);
+        timerBox.SetActive(false);
+        endPanel.SetActive(true);
+
+        resultText.text = "Görev Tamamlandı ✅";
+
+        if (playerGui != null)
+            playerGui.EnableCrosshair(false);
+
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
+    }
+
+    void MissionFailed(string reason)
+    {
+        if (missionEnded) return;
+
+        missionActive = false;
+        missionEnded = true;
+
+        gamePanel.SetActive(false);
+        timerBox.SetActive(false);
+        endPanel.SetActive(true);
+
+        resultText.text = reason;
+
+        if (playerGui != null)
+            playerGui.EnableCrosshair(false);
+
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
+    }
+
+    public void RetryMission()
+    {
+        SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+    }
+
+    public void ExitGame()
+    {
+        Application.Quit();
+    }
+
+    public void OpenControls()
+    {
+        mainMenuPanel.SetActive(false);
+        controlsPanel.SetActive(true);
+    }
+
+    public void BackToMenu()
+    {
+        controlsPanel.SetActive(false);
+        mainMenuPanel.SetActive(true);
+    }
+}
+
+using UnityEngine;
+using UnityEngine.AI;
+
+public class Health_Orta : MonoBehaviour
+{
+    [Header("Health Settings")]
+    [SerializeField] private int maxHealth = 175;
+    [SerializeField] private float deathDelay = 3f;
+    private int currentHealth;
+    private bool isDead = false;
+
+    private Animator animator;
+    private NavMeshAgent agent;
+
+    public bool IsDead => isDead;
+
+    void Start()
+    {
+        currentHealth = maxHealth;
+        animator = GetComponent<Animator>();
+        agent = GetComponent<NavMeshAgent>();
+    }
+
+    public void TakeDamage(int amount)
+    {
+        if (isDead) return;
+
+        currentHealth -= amount;
+        Debug.Log($"{gameObject.name} {amount} hasar ald . Kalan can: {currentHealth}");
+
+        if (currentHealth <= 0)
+        {
+            Die();
+        }
+    }
+
+    void Die()
+    {
+        if (isDead) return;
+        isDead = true;
+
+        if (agent != null) agent.isStopped = true;
+
+        if (animator != null)
+        {
+            animator.SetBool("isDead", true);
+        }
+
+        Collider col = GetComponent<Collider>();
+        if (col != null) col.enabled = false;
+
+        OrtaMovement move = GetComponent<OrtaMovement>();
+        if (move != null) move.OnDeath();
+
+        Destroy(gameObject, deathDelay);
+    }
+}
+
+using UnityEngine;
+using System.Collections;
+using UnityEngine.AI;
+using System;
+
+public class Health : MonoBehaviour
+{
+    public static event Action OnEnemyDied;
+
+    [Header("Health")]
+    [SerializeField] private int maxHealth = 100;
+    public int CurrentHealth { get; private set; }
+    public bool IsDead { get; private set; }
+
+    [Header("Animator Settings")]
+    [SerializeField] private string idleStateName = "Idle";
+    [SerializeField] private string dieStateName = "Die";
+    [SerializeField] private string isDeadBool = "isDead";
+
+    [Header("Death Options")]
+    [SerializeField] private bool lockYOnDeath = true;
+    [SerializeField] private float destroyDelay = 3f;
+
+    private Animator animator;
+    private CharacterController controller;
+    private MonoBehaviour[] behaviours;
+    private NavMeshAgent navMeshAgent;
+    private float deathY;
+
+    void Awake()
+    {
+        animator = GetComponent<Animator>();
+        controller = GetComponent<CharacterController>();
+        behaviours = GetComponents<MonoBehaviour>();
+        navMeshAgent = GetComponent<NavMeshAgent>();
+    }
+
+    void Start()
+    {
+        CurrentHealth = maxHealth;
+        IsDead = false;
+        if (animator)
+        {
+            animator.applyRootMotion = false;
+            animator.SetBool(isDeadBool, false);
+            animator.SetBool("isWalking", false);
+            animator.Play(idleStateName, 0, 0f);
+        }
+    }
+
+    public void TakeDamage(int amount)
+    {
+        if (IsDead) return;
+        CurrentHealth -= amount;
+        if (CurrentHealth <= 0)
+        {
+            CurrentHealth = 0;
+            Die();
+        }
+    }
+
+    private void Die()
+    {
+        if (IsDead) return;
+        IsDead = true;
+
+        OnEnemyDied?.Invoke();
+
+        if (animator)
+        {
+            animator.applyRootMotion = false;
+            animator.SetBool("isWalking", false);
+            animator.SetBool(isDeadBool, true);
+            animator.Play(dieStateName, 0, 0f);
+        }
+
+        if (lockYOnDeath)
+        {
+            deathY = transform.position.y;
+            StartCoroutine(StickToGround());
+        }
+
+        if (controller) controller.enabled = false;
+        if (navMeshAgent) navMeshAgent.enabled = false;
+        foreach (var mb in behaviours)
+            if (mb != null && mb != this) mb.enabled = false;
+
+        foreach (var c in GetComponentsInChildren<Collider>(true))
+            c.enabled = false;
+
+        Destroy(gameObject, destroyDelay);
+    }
+
+    private IEnumerator StickToGround()
+    {
+        while (true)
+        {
+            var p = transform.position;
+            p.y = deathY;
+            transform.position = p;
+            yield return null;
+        }
+    }
+}
+
+using UnityEngine;
+
+public class HelicopterLanding : MonoBehaviour
+{
+    public float duration = 120f;
+    public float startHeight = 10f;
+    public float endHeight = 0f;
+
+    private float elapsed = 0f;
+    private Vector3 startPos;
+    private Vector3 endPos;
+
+    void Start()
+    {
+        startPos = new Vector3(transform.position.x, startHeight, transform.position.z);
+        endPos = new Vector3(transform.position.x, endHeight, transform.position.z);
+    }
+
+    void Update()
+    {
+        if (elapsed < duration)
+        {
+            elapsed += Time.deltaTime;
+            float t = elapsed / duration;
+            transform.position = Vector3.Lerp(startPos, endPos, t);
+        }
+    }
+}
+
+using UnityEngine;
+
+public class LookX : MonoBehaviour
+{
+    [SerializeField] private float sensitivity = 120f; 
+    [SerializeField] private Transform cameraTarget;  
+    [SerializeField] private float smoothTime = 0.1f;
+
+    private float rotationYVelocity;
+    private float currentYRotation;
+    private float targetYRotation;
+
+    
+    void Update()
+    {
+        float mouseX = Input.GetAxis("Mouse X");
+
+        targetYRotation += mouseX * sensitivity * Time.deltaTime;
+
+        currentYRotation = Mathf.SmoothDampAngle(currentYRotation, targetYRotation, ref rotationYVelocity, smoothTime);
+
+        transform.rotation = Quaternion.Euler(0f, currentYRotation, 0f);
+    }
+}
+
+using UnityEngine;
+
+public class LookY : MonoBehaviour
+{
+    [SerializeField] private float sensitivity = 120f;
+    [SerializeField] private float smoothTime = 0.1f;  
+    [SerializeField] private float minY = -30f;        
+    [SerializeField] private float maxY = 60f;         
+
+    private float rotationXVelocity;
+    private float currentXRotation;
+    private float targetXRotation;
+
+    void Update()
+    {
+        float mouseY = Input.GetAxis("Mouse Y");
+
+        targetXRotation -= mouseY * sensitivity * Time.deltaTime;
+        targetXRotation = Mathf.Clamp(targetXRotation, minY, maxY);
+
+        currentXRotation = Mathf.SmoothDampAngle(currentXRotation, targetXRotation, ref rotationXVelocity, smoothTime);
+
+        transform.localRotation = Quaternion.Euler(currentXRotation, 0f, 0f);
+    }
+}
+
+using UnityEngine;
+using UnityEngine.AI;
+
+public class OrtaMovement : MonoBehaviour
+{
+    [Header("References")]
+    [SerializeField] private Transform player;
+    private NavMeshAgent agent;
+    private Animator animator;
+    private Health_Orta healthScript;
+
+    [Header("Distances")]
+    [SerializeField] private float walkDistance = 15f;
+    [SerializeField] private float runDistance = 8f;
+    [SerializeField] private float punchDistance = 2f;
+
+    [Header("Speeds")]
+    [SerializeField] private float walkSpeed = 1.5f;
+    [SerializeField] private float runSpeed = 3.5f;
+
+    [Header("Attack Settings")]
+    [SerializeField] private float punchCooldown = 1.5f;
+    [SerializeField] private int punchDamage = 25;  
+    private float nextPunchTime = 0f;
+
+    private bool isDead = false;
+
+    void Start()
+    {
+        animator = GetComponent<Animator>();
+        agent = GetComponent<NavMeshAgent>();
+        healthScript = GetComponent<Health_Orta>();
+
+        if (player == null)
+        {
+            GameObject p = GameObject.FindGameObjectWithTag("Player");
+            if (p != null) player = p.transform;
+        }
+
+        if (agent != null)
+            agent.stoppingDistance = punchDistance * 0.9f;
+    }
+
+    void Update()
+    {
+        if (isDead || healthScript == null || healthScript.IsDead) return;
+        if (player == null) return;
+
+        float distance = Vector3.Distance(transform.position, player.position);
+        bool isPunching = animator.GetBool("isPunching");
+
+        if (!isPunching)
+            transform.LookAt(new Vector3(player.position.x, transform.position.y, player.position.z));
+
+        if (distance > walkDistance)
+            Idle();
+        else if (distance > runDistance && distance <= walkDistance)
+            Walk();
+        else if (distance > punchDistance && distance <= runDistance)
+            Run();
+        else if (distance <= punchDistance)
+            Punch();
+    }
+
+    void Idle()
+    {
+        if (agent != null) agent.isStopped = true;
+        animator.SetFloat("speed", 0f);
+        animator.SetBool("isPunching", false);
+    }
+
+    void Walk()
+    {
+        if (agent == null) return;
+        agent.isStopped = false;
+        agent.speed = walkSpeed;
+        agent.SetDestination(player.position);
+        animator.SetFloat("speed", 1f);
+        animator.SetBool("isPunching", false);
+    }
+
+    void Run()
+    {
+        if (agent == null) return;
+        agent.isStopped = false;
+        agent.speed = runSpeed;
+        agent.SetDestination(player.position);
+        animator.SetFloat("speed", 2f);
+        animator.SetBool("isPunching", false);
+    }
+
+    void Punch()
+    {
+        if (Time.time < nextPunchTime) return;
+
+        if (agent != null) agent.isStopped = true;
+        animator.SetBool("isPunching", true);
+
+        nextPunchTime = Time.time + punchCooldown;
+    }
+
+    public void DealPunchDamage()
+    {
+        if (player == null) return;
+
+        float distance = Vector3.Distance(transform.position, player.position);
+
+        if (distance <= punchDistance + 0.5f)
+        {
+            PlayerHealth playerHealth = player.GetComponent<PlayerHealth>();
+            if (playerHealth != null && !playerHealth.IsDead())
+            {
+                playerHealth.TakeDamage(punchDamage);
+                Debug.Log($"[Enemy] Oyuncuya {punchDamage} hasar verdi!");
+            }
+        }
+    }
+
+
+    public void StopPunch() => animator.SetBool("isPunching", false);
+
+    public void OnDeath()
+    {
+        isDead = true;
+        if (agent != null) agent.enabled = false;
+    }
+}
+
+using UnityEngine;
+
+public class PlayerAimCamera : MonoBehaviour
+{
+    [Header("Refs")]
+    [SerializeField] private Camera playerCamera;
+    [SerializeField] private Transform cameraPivot;
+
+    [Header("FOV")]
+    [SerializeField] private float normalFOV = 60f;
+    [SerializeField] private float aimFOV = 40f;
+
+    [Header("Offsets (Local Position of Camera)")]
+    [SerializeField] private Vector3 normalOffset = new Vector3(0f, 0.6f, -3.0f);
+    [SerializeField] private Vector3 aimOffset = new Vector3(0.35f, 0.75f, -1.8f);
+
+    [Header("Smooth")]
+    [SerializeField] private float posLerp = 10f;
+    [SerializeField] private float fovLerp = 10f;
+
+    void Reset()
+    {
+        if (!playerCamera) playerCamera = GetComponentInChildren<Camera>();
+        cameraPivot = transform;
+    }
+
+    void Start()
+    {
+        if (!playerCamera) playerCamera = GetComponentInChildren<Camera>();
+        if (!cameraPivot) cameraPivot = transform;
+
+        playerCamera.transform.localPosition = normalOffset;
+        playerCamera.fieldOfView = normalFOV;
+    }
+
+    void Update()
+    {
+        bool isAimCamera = Input.GetMouseButton(1);
+
+        Vector3 targetOffset = isAimCamera ? aimOffset : normalOffset;
+        float targetFOV = isAimCamera ? aimFOV : normalFOV;
+
+        playerCamera.transform.localPosition =
+            Vector3.Lerp(playerCamera.transform.localPosition, targetOffset, Time.deltaTime * posLerp);
+
+        playerCamera.fieldOfView =
+            Mathf.Lerp(playerCamera.fieldOfView, targetFOV, Time.deltaTime * fovLerp);
+    }
+}
+
+using UnityEngine;
+
+public class PlayerGui : MonoBehaviour
+{
+    [SerializeField] private Texture2D _crosshair;
+    private bool isActive = false;
+
+    void OnGUI()
+    {
+        if (!isActive || _crosshair == null)
+            return;
+
+        float x = (Screen.width - _crosshair.width) / 2f;
+        float y = (Screen.height - _crosshair.height) / 2f;
+
+        GUI.DrawTexture(new Rect(x, y, _crosshair.width, _crosshair.height), _crosshair);
+    }
+
+    public void EnableCrosshair(bool value)
+    {
+        isActive = value;
+    }
+}
+
+using UnityEngine;
+
+public class PlayerHealth : MonoBehaviour
+{
+    [Header("Health")]
+    [SerializeField] private int maxHealth = 100;
+
+    [Header("References")]
+    [SerializeField] private Animator animator;
+
+    private int currentHealth;
+    private bool isDead = false;
+
+    void Start()
+    {
+        currentHealth = maxHealth;
+        if (!animator)
+            animator = GetComponent<Animator>();
+
+        if (animator)
+        {
+            animator.SetBool("isDead", false);
+        }
+    }
+
+    public void TakeDamage(int damage)
+    {
+        if (isDead) return;
+
+        currentHealth -= damage;
+        currentHealth = Mathf.Max(currentHealth, 0);
+
+        Debug.Log($"[PlayerHealth] Damage: {damage} | Current HP: {currentHealth}/{maxHealth}");
+
+        if (currentHealth <= 0)
+        {
+            Die();
+        }
+    }
+
+    private void Die()
+    {
+        if (isDead) return;
+
+        isDead = true;
+
+        Debug.Log("[PlayerHealth] Player öldü!");
+
+        PlayerMovement movement = GetComponent<PlayerMovement>();
+        if (movement) movement.enabled = false;
+
+        RifleWeapon weapon = GetComponent<RifleWeapon>();
+        if (weapon) weapon.enabled = false;
+
+        if (animator)
+        {
+            animator.SetBool("isDead", true);
+        }
+
+        StartCoroutine(FallToGround());
+    }
+
+    private System.Collections.IEnumerator FallToGround()
+    {
+        CharacterController controller = GetComponent<CharacterController>();
+
+        if (controller == null)
+        {
+            yield break;
+        }
+
+        float fallSpeed = 0f;
+        float gravity = 15f; 
+
+
+        while (!controller.isGrounded || fallSpeed > 0.1f)
+        {
+            fallSpeed += gravity * Time.deltaTime;
+
+            controller.Move(Vector3.down * fallSpeed * Time.deltaTime);
+
+            yield return null;
+        }
+
+        controller.enabled = false;
+
+        Debug.Log("[PlayerHealth] Karakter yere düştü.");
+    }
+
+    public void Heal(int amount)
+    {
+        if (isDead) return;
+
+        currentHealth += amount;
+        currentHealth = Mathf.Min(currentHealth, maxHealth);
+
+        Debug.Log($"[PlayerHealth] Healed: {amount} | Current HP: {currentHealth}/{maxHealth}");
+    }
+
+    public int GetCurrentHealth()
+    {
+        return currentHealth;
+    }
+
+    public bool IsDead()
+    {
+        return isDead;
+    }
+
+    void Update()
+    {
+        if (Input.GetKeyDown(KeyCode.H))
+        {
+            TakeDamage(25);
+        }
+
+        if (Input.GetKeyDown(KeyCode.J))
+        {
+            Heal(30);
+        }
+    }
+}
+
+using UnityEngine;
+
+public class PlayerMovement : MonoBehaviour
+{
+    [Header("Refs")]
+    [SerializeField] private Animator animator;
+
+    [Header("Movement")]
+    [SerializeField] private float moveSpeed = 5.0f;
+    [SerializeField] private float gravity = 1.0f;
+
+    private CharacterController controller;
+    private float yVelocity = 0.0f;
+    private bool isDead = false;
+
+    void Awake()
+    {
+        controller = GetComponent<CharacterController>();
+        if (!animator)
+            animator = GetComponent<Animator>();
+    }
+
+    void Start()
+    {
+        if (animator)
+        {
+            animator.SetBool("isDead", false);
+            animator.SetBool("isGrounded", true);
+            animator.SetFloat("Speed", 0f);
+        }
+    }
+
+    void Update()
+    {
+        if (isDead)
+            return;
+
+        float h = Input.GetAxis("Horizontal");
+        float v = Input.GetAxis("Vertical");
+
+        Vector3 direction = new Vector3(h, 0f, v);
+        Vector3 velocity = direction * moveSpeed;
+
+        float moveDir = 0f;
+        if (Mathf.Abs(h) > 0.1f)
+            moveDir = h;
+        else if (v < -0.1f)
+            moveDir = 0.5f;
+
+        animator.SetFloat("Direction", moveDir);
+
+
+        if (controller.isGrounded)
+        {
+            yVelocity = -1f;
+        }
+        else
+        {
+            yVelocity -= gravity;
+        }
+
+        velocity.y = yVelocity;
+        velocity = transform.TransformDirection(velocity);
+        controller.Move(velocity * Time.deltaTime);
+
+
+        float planarSpeed = new Vector3(controller.velocity.x, 0f, controller.velocity.z).magnitude;
+        animator.SetFloat("Speed", planarSpeed, 0.1f, Time.deltaTime);
+        animator?.SetBool("isGrounded", controller.isGrounded);
+    }
+
+    public void Die()
+    {
+        if (isDead) return;
+
+        isDead = true;
+
+
+        animator.SetBool("isDead", true);
+
+        controller.enabled = false;
+
+        CapsuleCollider capsule = GetComponent<CapsuleCollider>();
+        if (capsule != null)
+        {
+            capsule.direction = 2; 
+            capsule.center = new Vector3(0, 0.5f, 0); 
+        }
+
+
+        Invoke("DisablePlayer", 3f);
+    }
+
+    void DisablePlayer()
+    {
+        gameObject.SetActive(false);
+    }
+}
+
+using UnityEngine;
+
+public class RifleWeapon : MonoBehaviour
+{
+    [Header("Referanslar")]
+    [SerializeField] private Camera cam;
+    [SerializeField] private Animator animator;
+
+    [Header("Ateş Ayarları")]
+    [SerializeField] private int damage = 20;
+    [SerializeField] private float rayLength = 100f;
+    [SerializeField] private float fireRate = 0.1f;
+
+    private float nextFireTime = 0f;
+    private bool cursorLocked = false;
+
+    void Start()
+    {
+        if (!cam) cam = Camera.main;
+        if (!animator) animator = GetComponent<Animator>();
+
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
+    }
+
+    void Update()
+{
+    if (Input.GetKeyDown(KeyCode.Escape))
+    {
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
+    }
+
+    if (Input.GetButton("Fire1") && Time.time >= nextFireTime && Cursor.lockState == CursorLockMode.Locked)
+    {
+        Fire();
+        nextFireTime = Time.time + fireRate;
+    }
+}
+
+    void Fire()
+    {
+        if (animator != null)
+            animator.SetTrigger("FireTrig");
+
+        if (cam == null) return;
+
+        Ray ray = cam.ViewportPointToRay(new Vector3(0.5f, 0.5f, 0f));
+
+        if (Physics.Raycast(ray, out RaycastHit hit, rayLength))
+        {
+            Health hp = hit.collider.GetComponentInParent<Health>();
+            if (hp != null)
+                hp.TakeDamage(damage);
+        }
+    }
+
+    public void LockCursor()
+    {
+        Cursor.lockState = CursorLockMode.Locked;
+        Cursor.visible = false;
+        cursorLocked = true;
+    }
+
+    public void UnlockCursor()
+    {
+        Cursor.lockState = CursorLockMode.None;
+        Cursor.visible = true;
+        cursorLocked = false;
+    }
+}
+
+using UnityEngine;
+
+public class RotorSlowDown : MonoBehaviour
+{
+    public float startSpeed = 1500f; 
+    public float duration = 120f;    
+    private float elapsed = 0f;
+
+    void Update()
+    {
+        if (elapsed < duration)
+        {
+            elapsed += Time.deltaTime;
+            float t = elapsed / duration;
+
+            float currentSpeed = Mathf.Lerp(startSpeed, 0f, t);
+
+            transform.Rotate(Vector3.up * currentSpeed * Time.deltaTime, Space.Self);
+        }
+    }
+}
+
+using UnityEngine;
+
+public class TargetA : MonoBehaviour
+{
+    private void OnTriggerEnter(Collider other)
+    {
+        if (other.CompareTag("Player"))
+        {
+            FindObjectOfType<GameManager>().ReachTargetA();
+            Debug.Log("Target A'ya girildi!");
+        }
+    }
+}
+
+using UnityEngine;
+
+public class TargetB : MonoBehaviour
+{
+    private void OnTriggerEnter(Collider other)
+    {
+        if (other.CompareTag("Player"))
+        {
+            FindObjectOfType<GameManager>().ReachTargetB();
+            Debug.Log("Target B'ye girildi!");
+        }
+    }
+}
+
+using UnityEngine;
+
+public class YawNudgeOnClick : MonoBehaviour
+{
+    [Header("Settings")]
+    [Tooltip("Bir t kta eklenecek derece")]
+    public float deltaDegrees = 50f;
+
+    [Tooltip("Saniyedeki d n   h z  (derece/sn)")]
+    public float turnSpeedDegPerSec = 540f;
+
+    [Tooltip("T k bas l  tutuldu unda tekrar tekrar eklesin mi? (false = yaln zca bas ld    an)")]
+    public bool repeatWhileHeld = false;
+
+    private float targetYaw;       
+    private bool rotating = false;
+
+    void Start()
+    {
+        targetYaw = transform.eulerAngles.y;
+    }
+
+    void Update()
+    {
+        bool left  = Input.GetMouseButtonDown(0) || (repeatWhileHeld && Input.GetMouseButton(0));
+        bool right = Input.GetMouseButtonDown(1) || (repeatWhileHeld && Input.GetMouseButton(1));
+
+        if (left || right)
+        {
+            targetYaw = NormalizeAngle(targetYaw + deltaDegrees);
+            rotating = true;
+        }
+
+        if (rotating)
+        {
+            float currentYaw = transform.eulerAngles.y;
+            float newYaw = Mathf.MoveTowardsAngle(currentYaw, targetYaw, turnSpeedDegPerSec * Time.deltaTime);
+            transform.rotation = Quaternion.Euler(0f, newYaw, 0f);
+
+            if (Mathf.Abs(Mathf.DeltaAngle(newYaw, targetYaw)) < 0.01f)
+                rotating = false;
+        }
+    }
+
+    private float NormalizeAngle(float y)
+    {
+        y %= 360f;
+        if (y < 0f) y += 360f;
+        return y;
+    }
+}
